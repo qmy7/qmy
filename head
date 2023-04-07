@@ -1,0 +1,42 @@
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <unordered_map>
+#include <string>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+
+struct SecurityLabel {
+    int securityLevel;      // 密级（1-5）
+    int lifeCycle;          // 生命周期（天数）
+    int usageCount;         // 使用次数
+};
+enum UserType {
+    ADMIN = 1,
+    USER = 2
+};
+struct User {
+    std::string username;
+    int securityLevel;
+};
+UserType getUserType() {
+    int choice;
+    std::cout << "请选择用户类型: " << std::endl;
+    std::cout << "1. 管理员" << std::endl;
+    std::cout << "2. 用户" << std::endl;
+    std::cin >> choice;
+    return static_cast<UserType>(choice);
+}
+struct FileInfo {
+    std::string filename;
+    std::string filepath;
+    SecurityLabel label;  // 文件的密级标识
+    bool approved;
+};
+struct Requests {
+    User user;
+    std::string file_name;
+};
+
+extern std::vector<FileInfo> uploaded_files; 
+extern std::vector<Requests> uploaded_requests;

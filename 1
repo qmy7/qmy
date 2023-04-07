@@ -1,0 +1,420 @@
+#include "head.h"
+
+std::vector<FileInfo> uploaded_files;
+std::vector<Requests> uploaded_requests;
+
+const unsigned char FIXED_KEYS[][16] = {
+    {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10},
+    {0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01},
+    {0x45, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34},
+    {0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34},
+    {0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45}
+};
+
+void listFiles() {
+    std::cout << "已上传文件列表: " << std::endl;
+    for (const FileInfo& file_info : uploaded_files) {
+        std::cout << "文件名: " << file_info.filename
+            << " 路径: " << file_info.filepath
+            << " 审批状态: " << (file_info.approved ? "已审批" : "未审批")
+            << " 使用次数: " << file_info.label.usageCount
+            << " 密级: " << file_info.label.securityLevel
+            << std::endl;
+    }
+}
+// 检查文件是否存在
+bool fileExists(const std::string& filepath) {
+    std::ifstream file(filepath);
+    return file.good();
+}
+// 保存文件列表到文件
+void saveFileList(const std::vector<FileInfo>& uploadedFiles) {
+    std::ofstream file("file_data.txt");
+    for (const auto& file_info : uploadedFiles) {
+        file.flush(); // 强制刷新文件流
+        file << file_info.filename << " " << file_info.filepath << " " << file_info.approved << " "
+            << file_info.label.securityLevel << " " << file_info.label.lifeCycle << " " << file_info.label.usageCount << "\n";
+
+    }
+    file.close();
+}
+bool uploadFile(const FileInfo& file_info) {
+    if (!fileExists(file_info.filepath)) {
+        return false;
+    }
+    uploaded_files.push_back(file_info);
+    saveFileList(uploaded_files);
+    return true;
+}
+
+// 加载文件列表
+void loadFileList(std::vector<FileInfo>& uploadedFiles) {
+    std::ifstream file("file_data.txt");
+    FileInfo file_info;
+    while (file >> file_info.filename >> file_info.filepath >> file_info.approved
+        >> file_info.label.securityLevel >> file_info.label.lifeCycle >> file_info.label.usageCount) {
+        uploadedFiles.push_back(file_info);
+    }
+    file.close();
+}
+//保存申请到文件中
+void saveRequests(const std::vector<Requests>& requests) {
+    std::ofstream file("requests_data.txt");
+    for (const auto& request : requests) {
+        file << request.file_name << " " << request.user.securityLevel << "\n";
+    }
+    file.close();
+}
+// 从文件中加载请求
+void loadRequests(std::vector<Requests>& uploaded_requests) {
+    std::ifstream file("requests_data.txt");
+    Requests requests;
+    int security_level;
+    while (file >>requests.file_name >> requests.user.securityLevel) {
+        uploaded_requests.push_back(requests);
+    }
+    file.close();
+}
+//读取文件内容
+void readFileContent(const std::string& filepath) {
+    std::ifstream file(filepath);
+    if (file.is_open()) {
+        std::string line;
+        while (std::getline(file, line)) {
+            std::cout << line << std::endl;
+        }
+        file.close();
+    }
+    else {
+        std::cout << "无法打开文件" << std::endl;
+    }
+}
+//加密
+bool sm4_encrypt(const std::string& input_file, const std::string& output_file, const unsigned char* key, SecurityLabel label) {
+
+    std::ifstream ifs(input_file, std::ios::binary);
+    std::ofstream ofs(output_file, std::ios::binary);
+
+    if (!ifs.is_open() || !ofs.is_open()) {
+        return false;
+    }
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    EVP_EncryptInit_ex(ctx, EVP_sm4_cbc(), NULL, key, key); // 使用sm4算法 cbc分块方法 使用 key 作为 IV（初始化向量）
+
+    const size_t BUFFER_SIZE = 4096;
+    unsigned char inbuf[BUFFER_SIZE], outbuf[BUFFER_SIZE + EVP_MAX_BLOCK_LENGTH];
+    int inlen, outlen;
+    // 在文件开头写入密级信息
+    ofs.write(reinterpret_cast<const char*>(&label), sizeof(SecurityLabel));
+
+    while (ifs.read(reinterpret_cast<char*>(inbuf), BUFFER_SIZE)) {
+        inlen = static_cast<int>(ifs.gcount());
+        EVP_EncryptUpdate(ctx, outbuf, &outlen, inbuf, inlen);
+        ofs.write(reinterpret_cast<char*>(outbuf), outlen);
+        //std::cout << "读取加密了" << inlen << "字节" << std::endl;
+    }
+
+    inlen = static_cast<int>(ifs.gcount());
+    EVP_EncryptUpdate(ctx, outbuf, &outlen, inbuf, inlen);
+    ofs.write(reinterpret_cast<char*>(outbuf), outlen);
+
+    EVP_EncryptFinal_ex(ctx, outbuf, &outlen);
+    ofs.write(reinterpret_cast<char*>(outbuf), outlen);
+    //std::cout << "读取加密了" << inlen << "字节" << std::endl;
+
+    EVP_CIPHER_CTX_free(ctx);
+    ifs.close();
+    ofs.close();
+
+    return true;
+}
+bool sm4_decrypt(const std::string& input_file, const std::string& output_file, const unsigned char* key) {
+    std::ifstream ifs(input_file, std::ios::binary);
+    std::ofstream ofs(output_file, std::ios::binary);
+
+    if (!ifs.is_open() || !ofs.is_open()) {
+        return false;
+    }
+
+    // 读取密级信息
+    SecurityLabel label;
+    ifs.read(reinterpret_cast<char*>(&label), sizeof(SecurityLabel));
+    std::cout << "密级: " << label.securityLevel << ", 生命周期: " << label.lifeCycle << " 天, 使用次数: " << label.usageCount << std::endl;
+
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    EVP_DecryptInit_ex(ctx, EVP_sm4_cbc(), NULL, key, key); // 使用 key 作为 IV（初始化向量）
+
+    const size_t BUFFER_SIZE = 4096;
+    unsigned char inbuf[BUFFER_SIZE], outbuf[BUFFER_SIZE + EVP_MAX_BLOCK_LENGTH];
+    int inlen, outlen;
+
+
+    while (ifs.read(reinterpret_cast<char*>(inbuf), BUFFER_SIZE)) {
+        inlen = static_cast<int>(ifs.gcount());
+        EVP_DecryptUpdate(ctx, outbuf, &outlen, inbuf, inlen);
+        ofs.write(reinterpret_cast<char*>(outbuf), outlen);
+        //std::cout << "读取解密了" << inlen << "字节" << std::endl;
+    }
+    //处理不是4096倍数的数据
+    inlen = static_cast<int>(ifs.gcount());
+    EVP_DecryptUpdate(ctx, outbuf, &outlen, inbuf, inlen);
+    ofs.write(reinterpret_cast<char*>(outbuf), outlen);
+
+    EVP_DecryptFinal_ex(ctx, outbuf, &outlen);
+    ofs.write(reinterpret_cast<char*>(outbuf), outlen);
+    //std::cout << "读取解密了" << outlen << "字节" << std::endl;
+
+    EVP_CIPHER_CTX_free(ctx);
+    ifs.close();
+    ofs.close();
+
+    return true;
+}
+//to do直接获取而不是输入
+int getUserSecurityLevel() {
+    int userSecurityLevel;
+    std::cout << "请输入用户密级 (1-5): ";
+    std::cin >> userSecurityLevel;
+    return userSecurityLevel;
+}
+//根据密级获取密钥
+void generateKeyForLevel(int level, unsigned char* key) {
+    if (level < 1 || level > 5) {
+        throw std::invalid_argument("密级必须在1-5之间");
+    }
+    memcpy(key, FIXED_KEYS[level - 1], 16);
+}
+void changeUserSecurityLevel(std::vector<User>& users, const std::string& username, int new_security_level) {
+    for (User& user : users) {
+        if (user.username == username) {
+            //to do
+            user.securityLevel = new_security_level;
+            return;
+        }
+    }
+}
+int main() {
+    UserType userType = getUserType();
+    std::vector<User> users;
+    loadFileList(uploaded_files);
+    loadRequests(uploaded_requests);
+    while (true) {
+        if (userType == ADMIN) {
+            int choice;
+            std::cout << "请选择操作: " << std::endl;
+            std::cout << "1. 查看已上传文件列表" << std::endl;
+            std::cout << "2. 审批上传文件" << std::endl;
+            std::cout << "3. 审批查看申请" << std::endl;
+            std::cout << "4  修改密级" << std::endl;
+            std::cout << "5. 退出程序" << std::endl;
+            std::cout << "6. 切换" << std::endl;
+            std::cin >> choice;
+
+            if (choice == 1) {
+                listFiles();
+            }
+            else if (choice == 2) {
+                std::string filename;
+                std::cout << "请输入要审批的文件名: ";
+                std::cin >> filename;
+
+                bool file_found = false;
+                for (FileInfo& file_info : uploaded_files) {
+                    if (file_info.filename == filename) {
+                        file_found = true;
+                        int user_security_level = getUserSecurityLevel();
+                        if (user_security_level >= file_info.label.securityLevel) {
+                            std::cout << "审批通过" << std::endl;
+                            file_info.approved = true;
+                            // 加密文件
+                            unsigned char key[16];
+                            generateKeyForLevel(file_info.label.securityLevel, key);
+                            std::string encrypted_file = "encrypted_" + file_info.filename;
+                            if (sm4_encrypt(file_info.filepath, encrypted_file, key, file_info.label)) {
+                                std::cout << "加密成功，请查看加密后的文件: " << encrypted_file << std::endl;
+                                std::cout << key << std::endl;
+                            }
+                            else {
+                                std::cout << "加密失败" << std::endl;
+                            }
+                        }
+                        else {
+                            std::cout << "审批未通过，用户密级不足以访问此文件" << std::endl;
+                        }
+                        break;
+                    }
+                }
+                if (!file_found) {
+                    std::cout << "文件未找到" << std::endl;
+                }
+            }
+            else if (choice == 2) {
+                // 显示所有请求
+                std::cout << "所有请求: " << std::endl;
+                for (const auto& request : uploaded_requests) {
+                    std::cout << "文件名: " << request.file_name << " 用户密级: " << request.user.securityLevel << std::endl;
+                }
+
+                std::string filename;
+                std::cout << "请输入要审批的文件名: ";
+                std::cin >> filename;
+                bool file_found = false;
+                for (FileInfo& file_info : uploaded_files) {
+                    if (file_info.filename == filename) {
+                        file_found = true;
+                        int user_security_level = 5;
+                        if (user_security_level >= file_info.label.securityLevel) {
+                            std::cout << "审批通过" << std::endl;
+                            file_info.approved = true;
+                            file_info.label.usageCount--; // 通过审批后，文件的使用次数减1
+                            std::cout << "文件剩余使用次数: " << file_info.label.usageCount << std::endl;
+
+                            // 保存文件列表
+                            saveFileList(uploaded_files);
+
+                            // 删除请求
+                            for (auto it = uploaded_requests.begin(); it != uploaded_requests.end(); ++it) {
+                                if (it->file_name == filename) {
+                                    uploaded_requests.erase(it);
+                                    break; // 找到一个就删除并退出循环
+                                }
+                            }
+                            saveRequests(uploaded_requests); // 保存请求列表
+                        }
+                        else {
+                            std::cout << "审批未通过，用户密级不足以访问此文件" << std::endl;
+                        }
+                        break;
+                    }
+                }
+                if (!file_found) {
+                    std::cout << "文件未找到" << std::endl;
+                }
+            }
+            else if (choice == 3) {
+                // 修改用户密级的实现
+            }
+            else if (choice == 5) {
+                std::cout << "退出程序..." << std::endl;
+                break;
+            }
+            else if (choice == 6) {
+                userType = getUserType();
+            }
+            else {
+                std::cout << "无效的操作，请重新选择" << std::endl;
+            }
+        }
+        else if (userType == USER) {
+            int choice;
+            std::cout << "请选择操作: " << std::endl;
+            std::cout << "1. 上传文件" << std::endl;
+            std::cout << "2. 申请查看文件" << std::endl;
+            std::cout << "3. 查看文件" << std::endl;
+            std::cout << "4. 退出程序" << std::endl;
+            std::cout << "5.切换" << std::endl;
+            std::cin >> choice;
+
+            if (choice == 1) {
+                std::string local_file_path;
+                std::string uploaded_file_name;
+                int usecount;
+                int selevel;
+                std::cout << "请输入待上传文件的路径: ";
+                std::cin >> local_file_path;
+                std::cout << "请输入上传后文件的名称: ";
+                std::cin >> uploaded_file_name;
+                std::cout << "请输入文件的密级: ";
+                std::cin >> selevel;
+                std::cout << "请输入文件的使用次数: ";
+                std::cin >> usecount;
+
+                // 添加文件到已上传文件列表
+                FileInfo new_file;
+                new_file.filename = uploaded_file_name;
+                new_file.filepath = local_file_path;
+                new_file.approved = false;
+                new_file.label.securityLevel = selevel;
+                new_file.label.usageCount = usecount;
+                if (uploadFile(new_file)) {
+                    std::cout << "文件上传成功。" << std::endl;
+                }
+                else {
+                    std::cout << "文件上传失败。" << std::endl;
+                }
+            }
+            else if (choice == 2) {
+                std::string filename;
+                Requests requests;
+                std::cout << "请输入要请求查看的文件名: ";
+                std::cin >> filename;
+                bool file_found = false;
+                for (const FileInfo& file_info : uploaded_files) {
+                    if (file_info.filename == filename) {
+                        file_found = true;
+                        requests.file_name = file_info.filename;
+                        saveRequests(uploaded_requests); // 保存请求列表
+                        std::cout << "已向管理员发送查看请求。" << std::endl;
+                        break;
+                    }
+                }
+                if (!file_found) {
+                    std::cout << "文件未找到" << std::endl;
+                }
+            }
+            else if (choice == 3) {
+                std::string filename;
+                std::cout << "请输入要查看的文件名: ";
+                std::cin >> filename;
+
+                bool file_found = false;
+                for (const FileInfo& file_info : uploaded_files) {
+                    if (file_info.filename == filename) {
+                        file_found = true;
+                        if (file_info.approved) {
+                            if (file_info.label.usageCount > 0) {
+                                std::cout << "审批通过，可以查看文件" << std::endl;
+                                // 解密文件
+                                unsigned char key[16];
+                                generateKeyForLevel(file_info.label.securityLevel, key);
+                                std::string decrypted_file = "decrypted_" + file_info.filename;
+                                if (sm4_decrypt("encrypted_" + file_info.filename, decrypted_file, key)) {
+                                    std::cout << "解密成功，请查看解密后的文件: " << decrypted_file << std::endl;
+                                }
+                                else {
+                                    std::cout << "解密失败" << std::endl;
+                                }
+                            }
+                            else {
+                                std::cout << "文件使用次数已达上限。" << std::endl;
+                            }
+                        }
+                        else {
+                            std::cout << "文件未经审批。" << std::endl;
+                        }
+                        break;
+                    }
+                }
+                if (!file_found) {
+                    std::cout << "文件未找到" << std::endl;
+                }
+            }     
+            else if (choice == 4) {
+                std::cout << "退出程序..." << std::endl;
+                break;
+            }
+            else if (choice == 5) {
+                userType = getUserType();
+            }
+            else {
+                std::cout << "无效的操作，请重新选择" << std::endl;
+            }
+        }
+        else {
+            std::cout << "未知用户类型，请重新输入" << std::endl;
+            userType = getUserType();
+        }
+    }
+    saveFileList(uploaded_files);
+    return 0;
+}
